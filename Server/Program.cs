@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using SharedLib;
 
 class Player
 {
@@ -143,6 +144,30 @@ class Program
 
         Console.WriteLine($"[LOGIN] {pl.First} {pl.Last} => ID {pl.Id}");
         SendLine(s, "OK|" + pl.Id);
+
+        var igrac = new Igrac
+        {
+            Id = pl.Id,
+            Ime = pl.First,
+            Prezime = pl.Last,
+            BrojPobeda = 0,
+            BrojBodova = 0
+        };
+
+        var mec = new Mec
+        {
+            Igrac1Y = 8,
+            Igrac2Y = 8,
+            LopticaX = 20,
+            LopticaY = 10,
+            IgraUToku = false
+        };
+
+        byte[] pBytes = igrac.ToBytes();
+        byte[] mBytes = mec.ToBytes();
+
+        byte[] initPayload = BuildInitPayload(pBytes, mBytes);
+        NetFrames.SendFrame(s, initPayload);
     }
 
     static void SendLine(Socket s, string msg)
@@ -165,5 +190,23 @@ class Program
         foreach (var s in new List<Socket>(conns.Keys)) Drop(s);
         try { listen.Close(); } catch { }
         Console.WriteLine("Server stopped.");
+    }
+
+
+    static byte[] BuildInitPayload(byte[] playerBytes, byte[] matchBytes)
+    {
+        byte[] pLen = BitConverter.GetBytes(playerBytes.Length);
+        byte[] mLen = BitConverter.GetBytes(matchBytes.Length);
+
+        byte[] all = new byte[4 + playerBytes.Length + 4 + matchBytes.Length];
+
+        Buffer.BlockCopy(pLen, 0, all, 0, 4);
+        Buffer.BlockCopy(playerBytes, 0, all, 4, playerBytes.Length);
+
+        int off = 4 + playerBytes.Length;
+        Buffer.BlockCopy(mLen, 0, all, off, 4);
+        Buffer.BlockCopy(matchBytes, 0, all, off + 4, matchBytes.Length);
+
+        return all;
     }
 }
