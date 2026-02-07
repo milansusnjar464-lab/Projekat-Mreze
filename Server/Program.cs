@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Shared;
 using SharedLib;
 
 class Player
@@ -23,6 +24,17 @@ class Conn
 class Program
 {
     static Socket listen;
+
+    static Socket udp;
+    static EndPoint udpClientEp = null;
+
+    static int racketY = 8;
+    static int ballX = 20;
+    static int ballY = 10;
+
+    static int score = 0;
+    static int dirX = 1;
+
     static Dictionary<Socket, Conn> conns = new Dictionary<Socket, Conn>();
     static List<Player> players = new List<Player>();
     static int nextId = 1;
@@ -37,12 +49,19 @@ class Program
         listen.Listen(20);
         listen.Blocking = false;
 
+        udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        udp.Bind(new IPEndPoint(IPAddress.Any, 5001));
+        udp.Blocking = false;
+
+        Console.WriteLine("UDP RUNNING on port 5001");
+
         Console.WriteLine("SERVER RUNNING on port 5000");
         Console.WriteLine("Type LIST or EXIT");
         Console.WriteLine();
 
         while (true)
         {
+
             if (Console.KeyAvailable)
             {
                 string cmd = Console.ReadLine()?.Trim().ToUpperInvariant();
@@ -59,6 +78,9 @@ class Program
                     return;
                 }
             }
+
+            HandleUdpInput();
+            GameTick();
 
             var read = new List<Socket> { listen };
             foreach (var s in conns.Keys) read.Add(s);
@@ -208,5 +230,69 @@ class Program
         Buffer.BlockCopy(matchBytes, 0, all, off + 4, matchBytes.Length);
 
         return all;
+    }
+
+    static void HandleUdpInput()
+    {
+        byte[] buf = new byte[128];
+        EndPoint remote = new IPEndPoint(IPAddress.Any, 0);
+
+        while (true)
+        {
+            int n;
+            try { n = udp.ReceiveFrom(buf, ref remote); }
+            catch (SocketException ex)
+            {
+                if (ex.SocketErrorCode == SocketError.WouldBlock) break;
+                return;
+            }
+
+            if (n <= 0) break;
+
+            udpClientEp = remote;
+
+            string cmd = Encoding.UTF8.GetString(buf, 0, n).Trim();
+
+            if (cmd == "UP") racketY--;
+            else if (cmd == "DOWN") racketY++;
+
+            if (racketY < 0) racketY = 0;
+            if (racketY > 16) racketY = 16;
+        }
+    }
+
+    static void GameTick()
+    {
+        ballX += dirX;
+
+        if (ballX <= 0)
+        {
+            dirX = 1;
+            score++;
+        }
+        if (ballX >= 39)
+        {
+            dirX = -1;
+        }
+
+        if (udpClientEp != null)
+        {
+            var st = new BallState { X = ballX, Y = ballY };
+            udp.SendTo(st.ToBytes(), udpClientEp);
+        }
+
+        RenderServer();
+        System.Threading.Thread.Sleep(50);
+    }
+
+    static void RenderServer()
+    {
+        Console.SetCursorPosition(0, 0);
+        Console.WriteLine("=== SERVER GAME STATE ===".PadRight(50));
+        Console.WriteLine($"RacketY: {racketY}".PadRight(50));
+        Console.WriteLine($"Ball: ({ballX},{ballY})".PadRight(50));
+        Console.WriteLine($"Score: {score}".PadRight(50));
+        Console.WriteLine($"UDP client: {(udpClientEp == null ? "(none)" : udpClientEp.ToString())}".PadRight(50));
+        Console.WriteLine("Use client Arrow Up/Down".PadRight(50));
     }
 }

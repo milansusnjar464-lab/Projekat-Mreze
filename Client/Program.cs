@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Shared;
 using SharedLib;
 
 class Program
@@ -37,6 +38,57 @@ class Program
         Console.WriteLine($"INIT Match: p1Y={mec.Igrac1Y}, p2Y={mec.Igrac2Y}, ball=({mec.LopticaX},{mec.LopticaY}), status={(mec.IgraUToku ? "RUNNING" : "STOP")}");
 
         Console.WriteLine("Reply: " + resp);
+
+        Socket udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        udp.Bind(new IPEndPoint(IPAddress.Any, 0));
+        udp.Blocking = false;
+
+        EndPoint serverUdp = new IPEndPoint(IPAddress.Parse(ip), 5001);
+
+        Console.WriteLine();
+        Console.WriteLine("UDP started. Use Arrow Up/Down. ESC to exit.");
+
+        while (true)
+        {
+            if (Console.KeyAvailable)
+            {
+                var k = Console.ReadKey(true).Key;
+
+                if (k == ConsoleKey.UpArrow)
+                    udp.SendTo(Encoding.UTF8.GetBytes("UP"), serverUdp);
+                else if (k == ConsoleKey.DownArrow)
+                    udp.SendTo(Encoding.UTF8.GetBytes("DOWN"), serverUdp);
+                else if (k == ConsoleKey.Escape)
+                    break;
+            }
+
+            byte[] buf = new byte[64];
+            EndPoint from = new IPEndPoint(IPAddress.Any, 0);
+
+            try
+            {
+                int n = udp.ReceiveFrom(buf, ref from);
+                if (n > 0)
+                {
+                    byte[] data = new byte[n];
+                    Buffer.BlockCopy(buf, 0, data, 0, n);
+
+                    var st = BallState.FromBytes(data);
+
+                    Console.SetCursorPosition(0, 12);
+                    Console.WriteLine($"Ball: ({st.X},{st.Y})".PadRight(50));
+                }
+            }
+            catch (SocketException ex)
+            {
+                if (ex.SocketErrorCode != SocketError.WouldBlock) throw;
+            }
+
+            System.Threading.Thread.Sleep(20);
+        }
+
+        try { udp.Close(); } catch { }
+
         Console.WriteLine("Press ENTER...");
         Console.ReadLine();
 
