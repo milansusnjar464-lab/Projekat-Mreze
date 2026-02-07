@@ -2,11 +2,18 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Shared;
+using System.Threading;
 using SharedLib;
 
 class Program
 {
+    // ====== match thread state ======
+    static volatile bool matchRunning = false;
+    static Thread matchThread = null;
+
+    static Socket udp = null;
+    static EndPoint serverUdp = null;
+
     static void Main()
     {
         Console.Title = "CLIENT";
@@ -22,49 +29,141 @@ class Program
         Console.Write("Last name: ");
         string last = Console.ReadLine();
 
+        // ====== TCP connect + login ======
         Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         s.Connect(IPAddress.Parse(ip), 5000);
 
         SendLine(s, $"LOGIN|{first}|{last}");
         string resp = RecvLine(s);
-
-        byte[] initPayload = NetFrames.RecvFrame(s);
-
-        Igrac igrac;
-        Mec mec;
-        ParseInitPayload(initPayload, out igrac, out mec);
-
-        Console.WriteLine($"INIT Player: {igrac.Id} {igrac.Ime} {igrac.Prezime} | pobede={igrac.BrojPobeda}, bodovi={igrac.BrojBodova}");
-        Console.WriteLine($"INIT Match: p1Y={mec.Igrac1Y}, p2Y={mec.Igrac2Y}, ball=({mec.LopticaX},{mec.LopticaY}), status={(mec.IgraUToku ? "RUNNING" : "STOP")}");
-
         Console.WriteLine("Reply: " + resp);
 
-        Socket udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        udp.Bind(new IPEndPoint(IPAddress.Any, 0));
-        udp.Blocking = false;
+        // ====== INIT (Task 3) - frame receive ======
+        // server šalje inicijalne podatke posle prijave
+        try
+        {
+            byte[] initPayload = RecvFrame(s);
+            if (initPayload != null && initPayload.Length > 0)
+            {
+                Igrac igrac;
+                Mec mec;
+                ParseInitPayload(initPayload, out igrac, out mec);
 
-        EndPoint serverUdp = new IPEndPoint(IPAddress.Parse(ip), 5001);
+                Console.WriteLine($"INIT Player: {igrac.Id} {igrac.Ime} {igrac.Prezime} | pobede={igrac.BrojPobeda}, bodovi={igrac.BrojBodova}");
+                Console.WriteLine($"INIT Match: p1Y={mec.Igrac1Y}, p2Y={mec.Igrac2Y}, ball=({mec.LopticaX},{mec.LopticaY}), status={(mec.IgraUToku ? "RUNNING" : "STOP")}");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Ako INIT frame nije uključen ili format ne odgovara, client i dalje može da radi turnir
+            Console.WriteLine("INIT read skipped/failed: " + ex.Message);
+        }
 
         Console.WriteLine();
-        Console.WriteLine("UDP started. Use Arrow Up/Down. ESC to exit.");
+        Console.WriteLine("Waiting for tournament messages (START / END / RANK) ...");
 
+        // ====== TCP receive loop ======
         while (true)
         {
+            string line;
+            try
+            {
+                line = RecvLine(s);
+            }
+            catch
+            {
+                Console.WriteLine("Disconnected from server.");
+                break;
+            }
+
+            if (line.StartsWith("START|"))
+            {
+                StartMatchThread(line, ip);
+            }
+            else if (line.StartsWith("END|"))
+            {
+                Console.WriteLine();
+                Console.WriteLine("MATCH FINISHED");
+                Console.WriteLine(line);
+
+                // stop UDP loop
+                matchRunning = false;
+
+                try { matchThread?.Join(500); } catch { }
+                try { udp?.Close(); } catch { }
+
+                matchThread = null;
+                udp = null;
+                serverUdp = null;
+            }
+            else if (line == "RANK")
+            {
+                PrintRank(s);
+            }
+            else
+            {
+                // ostale poruke (ako ih bude)
+                Console.WriteLine(line);
+            }
+        }
+
+        try { s.Shutdown(SocketShutdown.Both); } catch { }
+        try { s.Close(); } catch { }
+    }
+
+    // ====== START handling: dobijamo UDP port i pokrećemo background UDP loop ======
+    static void StartMatchThread(string line, string serverIp)
+    {
+        // START|myUdpPort|opponentUdpPort|oppId|oppIme|oppPrezime
+        var p = line.Split('|');
+        int myPort = int.Parse(p[1]);
+
+        Console.WriteLine();
+        Console.WriteLine($"MATCH START -> My UDP port: {myPort} | Opponent: {p[4]} {p[5]}");
+        Console.WriteLine("Arrow Up/Down to move. (Match ends automatically on END)");
+
+        // napravi UDP socket za ovaj meč
+        udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        udp.Bind(new IPEndPoint(IPAddress.Any, 0)); // lokalni random port
+        udp.Blocking = false;
+
+        // šaljemo komande na server port koji je dodeljen ovom igraču
+        serverUdp = new IPEndPoint(IPAddress.Parse(serverIp), myPort);
+
+        // startuj thread
+        matchRunning = true;
+
+        matchThread = new Thread(MatchLoop);
+        matchThread.IsBackground = true;
+        matchThread.Start();
+    }
+
+    // ====== UDP loop: šalje UP/DOWN i prima Mec stanje ======
+    static void MatchLoop()
+    {
+        byte[] buf = new byte[256];
+        EndPoint from = new IPEndPoint(IPAddress.Any, 0);
+
+        while (matchRunning)
+        {
+            // tastatura (non-blocking)
             if (Console.KeyAvailable)
             {
                 var k = Console.ReadKey(true).Key;
 
-                if (k == ConsoleKey.UpArrow)
-                    udp.SendTo(Encoding.UTF8.GetBytes("UP"), serverUdp);
-                else if (k == ConsoleKey.DownArrow)
-                    udp.SendTo(Encoding.UTF8.GetBytes("DOWN"), serverUdp);
-                else if (k == ConsoleKey.Escape)
-                    break;
+                try
+                {
+                    if (k == ConsoleKey.UpArrow)
+                        udp.SendTo(Encoding.UTF8.GetBytes("UP"), serverUdp);
+                    else if (k == ConsoleKey.DownArrow)
+                        udp.SendTo(Encoding.UTF8.GetBytes("DOWN"), serverUdp);
+                }
+                catch
+                {
+                    // server je možda zatvorio port (kraj meča) ili firewall itd.
+                }
             }
 
-            byte[] buf = new byte[64];
-            EndPoint from = new IPEndPoint(IPAddress.Any, 0);
-
+            // prijem UDP stanja
             try
             {
                 int n = udp.ReceiveFrom(buf, ref from);
@@ -73,29 +172,46 @@ class Program
                     byte[] data = new byte[n];
                     Buffer.BlockCopy(buf, 0, data, 0, n);
 
-                    var st = BallState.FromBytes(data);
+                    var mec = Mec.FromBytes(data);
 
                     Console.SetCursorPosition(0, 12);
-                    Console.WriteLine($"Ball: ({st.X},{st.Y})".PadRight(50));
+                    Console.WriteLine(
+                        $"p1Y={mec.Igrac1Y} p2Y={mec.Igrac2Y} ball=({mec.LopticaX},{mec.LopticaY})"
+                        .PadRight(70));
                 }
             }
             catch (SocketException ex)
             {
-                if (ex.SocketErrorCode != SocketError.WouldBlock) throw;
+                // WouldBlock = nema paketa trenutno
+                // ConnectionReset = normalno na Windows UDP kad server port nije dostupan u tom momentu
+                if (ex.SocketErrorCode != SocketError.WouldBlock &&
+                    ex.SocketErrorCode != SocketError.ConnectionReset)
+                {
+                    break;
+                }
             }
 
-            System.Threading.Thread.Sleep(20);
+            Thread.Sleep(20);
         }
-
-        try { udp.Close(); } catch { }
-
-        Console.WriteLine("Press ENTER...");
-        Console.ReadLine();
-
-        try { s.Shutdown(SocketShutdown.Both); } catch { }
-        try { s.Close(); } catch { }
     }
 
+    // ====== RANK receive: RANK ... RANK_END ======
+    static void PrintRank(Socket s)
+    {
+        Console.WriteLine();
+        Console.WriteLine("=== RANK LIST ===");
+
+        while (true)
+        {
+            string row = RecvLine(s);
+            if (row == "RANK_END") break;
+            Console.WriteLine(row);
+        }
+
+        Console.WriteLine("=================");
+    }
+
+    // ====== TCP line helpers ======
     static void SendLine(Socket s, string msg)
     {
         s.Send(Encoding.UTF8.GetBytes(msg + "\n"));
@@ -118,22 +234,57 @@ class Program
         return sb.ToString().Trim('\r');
     }
 
+    // ====== TCP frame helpers (len + payload) ======
+    static byte[] RecvFrame(Socket s)
+    {
+        byte[] lenBytes = RecvExact(s, 4);
+        int len = BitConverter.ToInt32(lenBytes, 0);
+        if (len < 0 || len > 10_000_000) throw new Exception("Bad frame length: " + len);
+        return RecvExact(s, len);
+    }
+
+    static byte[] RecvExact(Socket s, int count)
+    {
+        byte[] buf = new byte[count];
+        int off = 0;
+        while (off < count)
+        {
+            int n = s.Receive(buf, off, count - off, SocketFlags.None);
+            if (n <= 0) throw new Exception("Disconnected");
+            off += n;
+        }
+        return buf;
+    }
+
+    // ====== INIT parsing: [int igrLen][igrBytes][int mecLen][mecBytes] ======
     static void ParseInitPayload(byte[] payload, out Igrac igrac, out Mec mec)
     {
-        int off = 0;
+        int pos = 0;
 
-        int pLen = BitConverter.ToInt32(payload, off);
-        off += 4;
-        byte[] pBytes = new byte[pLen];
-        Buffer.BlockCopy(payload, off, pBytes, 0, pLen);
-        off += pLen;
+        int igrLen = ReadInt32(payload, ref pos);
+        byte[] igrBytes = ReadBytes(payload, ref pos, igrLen);
 
-        int mLen = BitConverter.ToInt32(payload, off);
-        off += 4;
-        byte[] mBytes = new byte[mLen];
-        Buffer.BlockCopy(payload, off, mBytes, 0, mLen);
+        int mecLen = ReadInt32(payload, ref pos);
+        byte[] mecBytes = ReadBytes(payload, ref pos, mecLen);
 
-        igrac = Igrac.FromBytes(pBytes);
-        mec = Mec.FromBytes(mBytes);
+        igrac = Igrac.FromBytes(igrBytes);
+        mec = Mec.FromBytes(mecBytes);
+    }
+
+    static int ReadInt32(byte[] data, ref int pos)
+    {
+        if (pos + 4 > data.Length) throw new Exception("Bad INIT payload (int32)");
+        int v = BitConverter.ToInt32(data, pos);
+        pos += 4;
+        return v;
+    }
+
+    static byte[] ReadBytes(byte[] data, ref int pos, int len)
+    {
+        if (len < 0 || pos + len > data.Length) throw new Exception("Bad INIT payload (bytes)");
+        byte[] b = new byte[len];
+        Buffer.BlockCopy(data, pos, b, 0, len);
+        pos += len;
+        return b;
     }
 }
