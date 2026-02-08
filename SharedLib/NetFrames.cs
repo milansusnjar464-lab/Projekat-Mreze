@@ -45,7 +45,7 @@ namespace SharedLib
                 if (n <= 0) throw new Exception("Disconnected");
                 got += n;
             }
-            //vanja smrdi
+
             return buf;
         }
     }
