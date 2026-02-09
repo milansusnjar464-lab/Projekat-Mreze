@@ -210,7 +210,7 @@ class Program
         if (!tournamentRunning && tcpPlayers.Count >= 4)
         {
             tournamentRunning = true;
-            Console.WriteLine("=== TOURNAMENT START ===");
+            Console.WriteLine("=== TURNIR START ===");
             StartTournament();
         }
     }
@@ -311,12 +311,11 @@ class Program
     static void RenderServer()
     {
         Console.SetCursorPosition(0, 0);
-        Console.WriteLine("=== SERVER GAME STATE ===".PadRight(50));
+        Console.WriteLine("=== SERVER GAME STATUS ===".PadRight(50));
         Console.WriteLine($"RacketY: {racketY}".PadRight(50));
         Console.WriteLine($"Ball: ({ballX},{ballY})".PadRight(50));
         Console.WriteLine($"Score: {score}".PadRight(50));
         Console.WriteLine($"UDP client: {(udpClientEp == null ? "(none)" : udpClientEp.ToString())}".PadRight(50));
-        Console.WriteLine("Use client Arrow Up/Down".PadRight(50));
     }
 
     static void StartTournament()
@@ -330,7 +329,7 @@ class Program
             SendRankingToAll();
         }
 
-        Console.WriteLine("=== TOURNAMENT END ===");
+        Console.WriteLine("=== TURNIR END ===");
         tournamentRunning = false;
     }
 
@@ -357,7 +356,7 @@ class Program
         SendLine(p1.Tcp, $"START|{port1}|{port2}|{p2.Data.Id}|{p2.Data.Ime}|{p2.Data.Prezime}");
         SendLine(p2.Tcp, $"START|{port2}|{port1}|{p1.Data.Id}|{p1.Data.Ime}|{p1.Data.Prezime}");
 
-        Console.WriteLine($"[MATCH {matchNo}] {p1.Data.Ime} vs {p2.Data.Ime} | UDP ports: {port1}/{port2}");
+        Console.WriteLine($"[IGRA {matchNo}] {p1.Data.Ime} vs {p2.Data.Ime} | UDP ports: {port1}/{port2}");
 
         int score1 = 0, score2 = 0;
 
@@ -381,9 +380,14 @@ class Program
                 ReadUdpCmd(udp1, ref ep1, ref r1Y);
                 ReadUdpCmd(udp2, ref ep2, ref r2Y);
 
-                bx += dx; by += dy;
+                // Kretanje loptice
+                bx += dx;
+                by += dy;
+
+                // Odbijanje od gornje i donje ivice
                 if (by <= 0 || by >= 19) dy = -dy;
 
+                // Provera sudara sa reketima (reket je 4 polja visok)
                 bool hitLeft = (bx == 1 && by >= r1Y && by <= r1Y + 3);
                 bool hitRight = (bx == 38 && by >= r2Y && by <= r2Y + 3);
 
@@ -399,18 +403,26 @@ class Program
                     Igrac2Y = r2Y,
                     LopticaX = bx,
                     LopticaY = by,
-                    IgraUToku = true
+                    IgraUToku = true,
+                    Score1 = score1,
+                    Score2 = score2
                 };
 
                 byte[] payload = mec.ToBytes();
                 if (ep1 != null) udp1.SendTo(payload, ep1);
                 if (ep2 != null) udp2.SendTo(payload, ep2);
 
+                // Vizualizacija meča na serveru
                 Console.SetCursorPosition(0, 0);
-                Console.WriteLine($"MATCH {matchNo}: {p1.Data.Ime} vs {p2.Data.Ime}".PadRight(60));
-                Console.WriteLine($"Score: {score1} - {score2}".PadRight(60));
-                Console.WriteLine($"Ball=({bx},{by}) R1Y={r1Y} R2Y={r2Y}".PadRight(60));
-                Console.WriteLine($"Ports: {port1}/{port2}".PadRight(60));
+                Console.WriteLine($"=== IGRA {matchNo}: {p1.Data.Ime} vs {p2.Data.Ime} ===".PadRight(60));
+                Console.WriteLine($"Rezultat: {score1} - {score2}".PadRight(60));
+                Console.WriteLine($"Ports: {port1} / {port2}".PadRight(60));
+                Console.WriteLine();
+                Console.WriteLine("STATUS IGRE:".PadRight(60));
+                Console.WriteLine($"  Pozicija lopte: X={bx}, Y={by}".PadRight(60));
+                Console.WriteLine($"  {p1.Data.Ime} reket Y: {r1Y}".PadRight(60));
+                Console.WriteLine($"  {p2.Data.Ime} reket Y: {r2Y}".PadRight(60));
+                Console.WriteLine();
 
                 System.Threading.Thread.Sleep(30);
             }

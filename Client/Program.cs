@@ -13,6 +13,8 @@ class Program
 
     static Socket udp = null;
     static EndPoint serverUdp = null;
+    static volatile int myMatchScore = 0;
+    static volatile int oppMatchScore = 0;
 
     static void Main()
     {
@@ -23,10 +25,10 @@ class Program
         string ip = Console.ReadLine();
         if (string.IsNullOrWhiteSpace(ip)) ip = "127.0.0.1";
 
-        Console.Write("First name: ");
+        Console.Write("Ime: ");
         string first = Console.ReadLine();
 
-        Console.Write("Last name: ");
+        Console.Write("Prezime: ");
         string last = Console.ReadLine();
 
         // ====== TCP connect + login ======
@@ -81,8 +83,16 @@ class Program
             }
             else if (line.StartsWith("END|"))
             {
+                // END|myScore|oppScore|winnerId
+                var parts = line.Split('|');
+                if (parts.Length >= 3)
+                {
+                    int.TryParse(parts[1], out myMatchScore);
+                    int.TryParse(parts[2], out oppMatchScore);
+                }
+
                 Console.WriteLine();
-                Console.WriteLine("MATCH FINISHED");
+                Console.WriteLine("IGRA ZAVRSENA");
                 Console.WriteLine(line);
 
                 // stop UDP loop
@@ -117,6 +127,10 @@ class Program
         var p = line.Split('|');
         int myPort = int.Parse(p[1]);
 
+        // Resetuj rezultat za novi meč
+        myMatchScore = 0;
+        oppMatchScore = 0;
+
         Console.WriteLine();
         Console.WriteLine($"MATCH START -> My UDP port: {myPort} | Opponent: {p[4]} {p[5]}");
         Console.WriteLine("Arrow Up/Down to move. (Match ends automatically on END)");
@@ -137,7 +151,6 @@ class Program
         matchThread.Start();
     }
 
-    // ====== UDP loop: šalje UP/DOWN i prima Mec stanje ======
     static void MatchLoop()
     {
         byte[] buf = new byte[256];
@@ -174,10 +187,14 @@ class Program
 
                     var mec = Mec.FromBytes(data);
 
+                    // ZADATAK 7: Prikaz stanja igre (jednostavna verzija)
                     Console.SetCursorPosition(0, 12);
-                    Console.WriteLine(
-                        $"p1Y={mec.Igrac1Y} p2Y={mec.Igrac2Y} ball=({mec.LopticaX},{mec.LopticaY})"
-                        .PadRight(70));
+                    Console.WriteLine("=== STATUS IGRE ===".PadRight(70));
+                    Console.WriteLine($"Score: Player1 {mec.Score1} - {mec.Score2} Player2".PadRight(70));
+                    Console.WriteLine($"Loptica: X={mec.LopticaX}, Y={mec.LopticaY}".PadRight(70));
+                    Console.WriteLine($"Player 1 Reket Y: {mec.Igrac1Y}".PadRight(70));
+                    Console.WriteLine($"Player 2 Reket Y: {mec.Igrac2Y}".PadRight(70));
+                    Console.WriteLine("Use Arrow Up/Down to move".PadRight(70));
                 }
             }
             catch (SocketException ex)
@@ -195,11 +212,10 @@ class Program
         }
     }
 
-    // ====== RANK receive: RANK ... RANK_END ======
     static void PrintRank(Socket s)
     {
         Console.WriteLine();
-        Console.WriteLine("=== RANK LIST ===");
+        Console.WriteLine("=== RANG LISTA ===");
 
         while (true)
         {
@@ -211,7 +227,7 @@ class Program
         Console.WriteLine("=================");
     }
 
-    // ====== TCP line helpers ======
+    //TCP
     static void SendLine(Socket s, string msg)
     {
         s.Send(Encoding.UTF8.GetBytes(msg + "\n"));
@@ -234,7 +250,7 @@ class Program
         return sb.ToString().Trim('\r');
     }
 
-    // ====== TCP frame helpers (len + payload) ======
+    //TCP frame helpers len i payload
     static byte[] RecvFrame(Socket s)
     {
         byte[] lenBytes = RecvExact(s, 4);
@@ -256,7 +272,7 @@ class Program
         return buf;
     }
 
-    // ====== INIT parsing: [int igrLen][igrBytes][int mecLen][mecBytes] ======
+    // INIT parsing
     static void ParseInitPayload(byte[] payload, out Igrac igrac, out Mec mec)
     {
         int pos = 0;

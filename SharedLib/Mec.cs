@@ -10,6 +10,8 @@ namespace SharedLib
         public int LopticaX;
         public int LopticaY;
         public bool IgraUToku;
+        public int Score1;  // Dodato za zadatak 7
+        public int Score2;  // Dodato za zadatak 7
 
         public byte[] ToBytes()
         {
@@ -21,6 +23,8 @@ namespace SharedLib
                 bw.Write(LopticaX);
                 bw.Write(LopticaY);
                 bw.Write(IgraUToku);
+                bw.Write(Score1);
+                bw.Write(Score2);
                 bw.Flush();
                 return ms.ToArray();
             }
@@ -31,7 +35,7 @@ namespace SharedLib
             using (var ms = new MemoryStream(data))
             using (var br = new BinaryReader(ms, Encoding.UTF8, true))
             {
-                return new Mec
+                var mec = new Mec
                 {
                     Igrac1Y = br.ReadInt32(),
                     Igrac2Y = br.ReadInt32(),
@@ -39,6 +43,15 @@ namespace SharedLib
                     LopticaY = br.ReadInt32(),
                     IgraUToku = br.ReadBoolean()
                 };
+
+                // Provera da li ima još podataka (za kompatibilnost sa starim verzijama)
+                if (ms.Position < ms.Length)
+                {
+                    mec.Score1 = br.ReadInt32();
+                    mec.Score2 = br.ReadInt32();
+                }
+
+                return mec;
             }
         }
     }
