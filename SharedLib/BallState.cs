@@ -1,7 +1,7 @@
 ﻿using System.IO;
 using System.Text;
 
-namespace Shared
+namespace SharedLib
 {
     public class BallState
     {
